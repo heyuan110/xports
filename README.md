@@ -32,10 +32,10 @@ Interactive TUI port manager for macOS — scan, filter & kill listening ports r
 ### npm (recommended)
 
 ```bash
-npm install -g xports
+npm install -g @heyuan110/xports
 ```
 
-### Manual
+### Git clone
 
 ```bash
 git clone https://github.com/heyuan110/xports.git

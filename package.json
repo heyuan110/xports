@@ -1,5 +1,5 @@
 {
-  "name": "xports",
+  "name": "@heyuan110/xports",
   "version": "1.0.0",
   "description": "Interactive TUI port manager for macOS — scan, filter & kill listening ports",
   "bin": {

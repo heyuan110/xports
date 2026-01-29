@@ -32,10 +32,10 @@ macOS 交互式终端端口管理器 — 扫描、筛选、一键终止监听端
 ### npm（推荐）
 
 ```bash
-npm install -g xports
+npm install -g @heyuan110/xports
 ```
 
-### 手动安装
+### Git clone
 
 ```bash
 git clone https://github.com/heyuan110/xports.git
