@@ -1,0 +1,31 @@
+{
+  "name": "xports",
+  "version": "1.0.0",
+  "description": "Interactive TUI port manager for macOS — scan, filter & kill listening ports",
+  "bin": {
+    "xports": "./bin/xports"
+  },
+  "keywords": [
+    "port",
+    "process",
+    "kill",
+    "tui",
+    "terminal",
+    "macos",
+    "cli",
+    "lsof"
+  ],
+  "author": "bruce <https://heyuan110.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/heyuan110/xports.git"
+  },
+  "homepage": "https://github.com/heyuan110/xports",
+  "engines": {
+    "node": ">=14"
+  },
+  "files": [
+    "bin/xports"
+  ]
+}

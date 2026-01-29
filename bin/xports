@@ -1,0 +1,686 @@
+#!/usr/bin/env node
+'use strict';
+
+const { execSync } = require('child_process');
+const readline = require('readline');
+
+// ─── Meta ───────────────────────────────────────────────────────────────────
+
+const VERSION = '1.0.0';
+const AUTHOR = 'bruce';
+const BLOG = 'https://heyuan110.com';
+const REPO = 'https://github.com/heyuan110/xports';
+
+// ─── i18n ───────────────────────────────────────────────────────────────────
+
+const LANG_ZH = {
+  title: ' XPorts 端口管理器 ',
+  serviceCount: (n) => ` 共 ${n} 个服务 `,
+  desc: '描述',
+  noMatch: '没有匹配的端口',
+  noPort: '没有发现监听端口',
+  scrollUp: (n) => `  \u2191 还有 ${n} 项`,
+  scrollDown: (n) => `  \u2193 还有 ${n} 项`,
+  confirmKill: (n) => `  确认终止 ${n} 个进程？ (y)确认  (n)取消`,
+  filterPrompt: '  过滤: ',
+  selectedCount: (n) => `  已选 ${n} 个  `,
+  helpLine: '  \u2191\u2193/jk 移动  \u2423 选择  a 全选  Enter 终止  / 过滤  r 刷新  q 退出',
+  killed: (n) => `已终止 ${n} 个进程`,
+  refreshed: '列表已刷新',
+  ttyError: '此工具需要在交互式终端中运行',
+  bannerTitle: 'macOS 端口管理器',
+  bannerDesc: '交互式 TUI，扫描、筛选、一键终止监听端口',
+  bannerUsage: '用法',
+  bannerKeys: '快捷键',
+  bannerZeroDep: '零依赖，纯 Node.js 内置模块驱动',
+  usageLines: [
+    ['xports              ', '启动交互界面'],
+    ['xports --lang=en    ', '英文界面'],
+    ['xports -h | --help  ', '显示帮助'],
+    ['xports -v | --version', ''],
+  ],
+  keyLines: [
+    ['\u2191\u2193 / j k    ', '上下移动光标'],
+    ['\u2423 (空格)     ', '选中 / 取消'],
+    ['a           ', '全选 / 全不选'],
+    ['Enter       ', '终止选中进程'],
+    ['/           ', '过滤搜索'],
+    ['r           ', '刷新列表'],
+    ['q / Esc     ', '退出'],
+  ],
+  // port labels
+  dockerService: 'Docker 服务',
+  nodeService: 'Node 服务',
+  pythonService: 'Python 服务',
+  javaService: 'Java 服务',
+  rubyService: 'Ruby 服务',
+  goService: 'Go 服务',
+  proxyService: '代理服务',
+  systemService: '系统服务',
+  controlCenter: '控制中心',
+  cupsLabel: 'CUPS 打印',
+  socksLabel: 'SOCKS 代理',
+  httpProxy: 'HTTP 代理',
+  mgmt: '管理',
+};
+
+const LANG_EN = {
+  title: ' XPorts Manager ',
+  serviceCount: (n) => ` ${n} services `,
+  desc: 'DESCRIPTION',
+  noMatch: 'No matching ports',
+  noPort: 'No listening ports found',
+  scrollUp: (n) => `  \u2191 ${n} more above`,
+  scrollDown: (n) => `  \u2193 ${n} more below`,
+  confirmKill: (n) => `  Kill ${n} process(es)? (y)confirm  (n)cancel`,
+  filterPrompt: '  Filter: ',
+  selectedCount: (n) => `  ${n} selected  `,
+  helpLine: '  \u2191\u2193/jk Move  \u2423 Select  a All  Enter Kill  / Filter  r Refresh  q Quit',
+  killed: (n) => `Killed ${n} process(es)`,
+  refreshed: 'List refreshed',
+  ttyError: 'This tool requires an interactive terminal',
+  bannerTitle: 'macOS Port Manager',
+  bannerDesc: 'Interactive TUI to scan, filter & kill listening ports',
+  bannerUsage: 'Usage',
+  bannerKeys: 'Keys',
+  bannerZeroDep: 'Zero dependencies \u2014 pure Node.js built-in modules',
+  usageLines: [
+    ['xports              ', 'Launch interactive UI'],
+    ['xports --lang=zh    ', 'Chinese interface'],
+    ['xports -h | --help  ', 'Show help'],
+    ['xports -v | --version', ''],
+  ],
+  keyLines: [
+    ['\u2191\u2193 / j k    ', 'Move cursor'],
+    ['\u2423 (Space)    ', 'Toggle select'],
+    ['a           ', 'Select all / none'],
+    ['Enter       ', 'Kill selected'],
+    ['/           ', 'Filter search'],
+    ['r           ', 'Refresh list'],
+    ['q / Esc     ', 'Quit'],
+  ],
+  dockerService: 'Docker Service',
+  nodeService: 'Node Service',
+  pythonService: 'Python Service',
+  javaService: 'Java Service',
+  rubyService: 'Ruby Service',
+  goService: 'Go Service',
+  proxyService: 'Proxy',
+  systemService: 'System',
+  controlCenter: 'Control Center',
+  cupsLabel: 'CUPS Printing',
+  socksLabel: 'SOCKS Proxy',
+  httpProxy: 'HTTP Proxy',
+  mgmt: 'Mgmt',
+};
+
+// Detect language: --lang=xx flag > LANG env > default zh
+function detectLang() {
+  for (const arg of process.argv.slice(2)) {
+    const m = arg.match(/^--lang=(.+)$/);
+    if (m) return m[1].toLowerCase().startsWith('en') ? 'en' : 'zh';
+  }
+  const env = process.env.LANG || process.env.LC_ALL || '';
+  if (env.startsWith('en')) return 'en';
+  return 'zh';
+}
+
+const lang = detectLang();
+const t = lang === 'en' ? LANG_EN : LANG_ZH;
+
+// ─── CLI flags ──────────────────────────────────────────────────────────────
+
+function showBanner() {
+  const c = (code) => `\x1b[${code}m`;
+  const R = c(0);
+  const B = c(1);
+  const D = c(2);
+  const cyan = c(36);
+  const bCyan = c(96);
+  const bMag = c(95);
+  const gray = c(90);
+  const white = c(97);
+  const yellow = c(33);
+  const green = c(32);
+
+  let buf = `
+${bCyan}${B}    ██╗  ██╗██████╗  ██████╗ ██████╗ ████████╗███████╗${R}
+${bCyan}${B}    ╚██╗██╔╝██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝██╔════╝${R}
+${cyan}${B}     ╚███╔╝ ██████╔╝██║   ██║██████╔╝   ██║   ███████╗${R}
+${cyan}     ██╔██╗ ██╔═══╝ ██║   ██║██╔══██╗   ██║   ╚════██║${R}
+${bMag}    ██╔╝ ██╗██║     ╚██████╔╝██║  ██║   ██║   ███████║${R}
+${bMag}    ╚═╝  ╚═╝╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝${R}
+${D}${gray}    ──────────────────────────────────────────────────────${R}
+${white}${B}    ${t.bannerTitle}${R} ${gray}v${VERSION}${R}
+${gray}    ${t.bannerDesc}${R}
+`;
+
+  buf += `\n${yellow}${B}    ${t.bannerUsage}${R}\n`;
+  for (const [cmd, desc] of t.usageLines) {
+    buf += `${gray}          ${cmd}${white}${desc}${R}\n`;
+  }
+
+  buf += `\n${green}${B}    ${t.bannerKeys}${R}\n`;
+  for (const [key, desc] of t.keyLines) {
+    buf += `${gray}    ${key}${white}${desc}${R}\n`;
+  }
+
+  buf += `
+${gray}    ${D}${t.bannerZeroDep}${R}
+${gray}    ${D}Author: ${bCyan}${AUTHOR}${R}  ${gray}${D}Blog: ${bMag}${BLOG}${R}  ${gray}${D}Repo: ${bMag}${REPO}${R}
+`;
+
+  console.log(buf);
+}
+
+// Handle CLI flags (skip --lang since it's handled above)
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--lang'));
+if (args.includes('-h') || args.includes('--help')) {
+  showBanner();
+  process.exit(0);
+}
+if (args.includes('-v') || args.includes('--version')) {
+  console.log(`xports v${VERSION}`);
+  process.exit(0);
+}
+
+// ─── ANSI helpers ───────────────────────────────────────────────────────────
+
+const ESC = '\x1b[';
+const HIDE_CURSOR = `${ESC}?25l`;
+const SHOW_CURSOR = `${ESC}?25h`;
+const CLEAR_SCREEN = `${ESC}2J${ESC}H`;
+const RESET = `${ESC}0m`;
+const BOLD = `${ESC}1m`;
+const DIM = `${ESC}2m`;
+const ITALIC = `${ESC}3m`;
+
+const FG = {
+  red: `${ESC}31m`,
+  green: `${ESC}32m`,
+  yellow: `${ESC}33m`,
+  blue: `${ESC}34m`,
+  magenta: `${ESC}35m`,
+  cyan: `${ESC}36m`,
+  white: `${ESC}37m`,
+  gray: `${ESC}90m`,
+  brightGreen: `${ESC}92m`,
+  brightYellow: `${ESC}93m`,
+  brightBlue: `${ESC}94m`,
+  brightMagenta: `${ESC}95m`,
+  brightCyan: `${ESC}96m`,
+  brightWhite: `${ESC}97m`,
+};
+
+const BG = {
+  black: `${ESC}40m`,
+  gray: `${ESC}100m`,
+};
+
+// ─── Known ports database ───────────────────────────────────────────────────
+
+const KNOWN_PORTS = {
+  21: 'FTP', 22: 'SSH', 25: 'SMTP', 53: 'DNS', 80: 'HTTP', 443: 'HTTPS',
+  631: t.cupsLabel, 1080: t.socksLabel,
+  1433: 'SQL Server', 1521: 'Oracle', 2181: 'ZooKeeper', 2379: 'etcd',
+  3000: 'Dev Server', 3001: 'Dev Server', 3002: 'Dev Server', 3003: 'Dev Server',
+  3306: 'MySQL', 3307: 'MySQL', 3389: 'RDP',
+  4200: 'Angular Dev', 4567: 'Sinatra',
+  5000: 'Flask / AirPlay', 5173: 'Vite Dev', 5174: 'Vite Dev',
+  5432: 'PostgreSQL', 5433: 'PostgreSQL', 5672: 'RabbitMQ', 5900: 'VNC',
+  6379: 'Redis', 6380: 'Redis',
+  7890: t.proxyService, 7891: t.proxyService,
+  8000: 'Dev Server', 8001: 'Dev Server',
+  8080: t.httpProxy, 8081: 'Dev Server', 8082: 'Dev Server', 8088: 'Dev Server',
+  8443: 'HTTPS Alt', 8761: 'Eureka', 8848: 'Nacos', 8888: 'Jupyter',
+  9000: 'PHP-FPM / SonarQube', 9090: 'Prometheus', 9092: 'Kafka',
+  9200: 'Elasticsearch', 9300: 'ES Transport', 9418: 'Git Daemon', 9999: 'Dev Server',
+  10000: 'Webmin', 11211: 'Memcached',
+  15672: `RabbitMQ ${t.mgmt}`, 16379: 'Redis Sentinel',
+  27017: 'MongoDB', 27018: 'MongoDB',
+};
+
+const SYSTEM_PROCESSES = new Set([
+  'rapportd', 'AirPlayXPCHelper', 'ControlCenter', 'SystemUIServer',
+  'WiFiAgent', 'mDNSResponder', 'configd', 'launchd',
+  'UserEventAgent', 'sharingd', 'bluetoothd', 'loginwindow',
+]);
+
+// ─── Port scanning ──────────────────────────────────────────────────────────
+
+function scanPorts() {
+  let output;
+  try {
+    output = execSync('lsof -iTCP -sTCP:LISTEN -nP', {
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+  } catch (e) {
+    if (e.stdout) output = e.stdout;
+    else return [];
+  }
+
+  const lines = output.trim().split('\n');
+  if (lines.length < 2) return [];
+
+  const dataLines = lines.slice(1);
+  const pidMap = new Map();
+
+  for (const line of dataLines) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 9) continue;
+
+    const name = parts[0];
+    const pid = parts[1];
+    const nameField = parts[8];
+
+    const colonIdx = nameField.lastIndexOf(':');
+    if (colonIdx === -1) continue;
+    const port = parseInt(nameField.slice(colonIdx + 1), 10);
+    if (!port || isNaN(port)) continue;
+
+    if (!pidMap.has(pid)) {
+      pidMap.set(pid, {
+        name,
+        pid: parseInt(pid, 10),
+        ports: new Set(),
+        isDocker: /^(docker|com\.docker|vpnkit)/.test(name),
+        isSystem: SYSTEM_PROCESSES.has(name),
+      });
+    }
+    pidMap.get(pid).ports.add(port);
+  }
+
+  const portMap = new Map();
+  for (const [, proc] of pidMap) {
+    for (const port of proc.ports) {
+      if (!portMap.has(port)) {
+        portMap.set(port, {
+          port,
+          name: proc.name,
+          pid: proc.pid,
+          isDocker: proc.isDocker,
+          isSystem: proc.isSystem,
+          label: getLabel(port, proc.name, proc.isDocker),
+        });
+      }
+    }
+  }
+
+  return Array.from(portMap.values()).sort((a, b) => a.port - b.port);
+}
+
+function getLabel(port, processName, isDocker) {
+  if (isDocker) {
+    const known = KNOWN_PORTS[port];
+    return known ? `Docker - ${known}` : t.dockerService;
+  }
+
+  const known = KNOWN_PORTS[port];
+  const lower = processName.toLowerCase();
+
+  if (lower === 'node') return known || t.nodeService;
+  if (lower === 'python' || lower === 'python3') return known || t.pythonService;
+  if (lower === 'java') return known || t.javaService;
+  if (lower === 'ruby') return known || t.rubyService;
+  if (lower === 'go' || lower === 'main') return known || t.goService;
+  if (lower === 'nginx') return 'Nginx';
+  if (lower === 'httpd' || lower === 'apache2') return 'Apache';
+  if (lower === 'mysqld') return 'MySQL';
+  if (lower === 'postgres') return 'PostgreSQL';
+  if (lower === 'redis-server') return 'Redis';
+  if (lower === 'mongod') return 'MongoDB';
+  if (lower.includes('clash')) return t.proxyService;
+  if (lower.includes('code') || lower === 'code helper') return 'VS Code';
+  if (lower.includes('cursor')) return 'Cursor';
+  if (lower === 'rapportd') return t.systemService;
+  if (lower === 'controlcenter') return t.controlCenter;
+
+  return known || processName;
+}
+
+// ─── TUI State ──────────────────────────────────────────────────────────────
+
+let entries = [];
+let filteredEntries = [];
+let cursor = 0;
+let selected = new Set();
+let filterText = '';
+let filterMode = false;
+let confirmMode = false;
+let message = '';
+let messageTimeout = null;
+let scrollOffset = 0;
+
+function getTermSize() {
+  return {
+    rows: process.stdout.rows || 24,
+    cols: process.stdout.columns || 80,
+  };
+}
+
+function getMaxVisibleRows() {
+  const { rows } = getTermSize();
+  return Math.max(1, rows - 8);
+}
+
+function applyFilter() {
+  if (!filterText) {
+    filteredEntries = entries.slice();
+  } else {
+    const lower = filterText.toLowerCase();
+    filteredEntries = entries.filter(
+      (e) =>
+        String(e.port).includes(lower) ||
+        e.name.toLowerCase().includes(lower) ||
+        e.label.toLowerCase().includes(lower) ||
+        String(e.pid).includes(lower)
+    );
+  }
+  cursor = Math.min(cursor, Math.max(0, filteredEntries.length - 1));
+  adjustScroll();
+}
+
+function adjustScroll() {
+  const maxVisible = getMaxVisibleRows();
+  if (filteredEntries.length <= maxVisible) {
+    scrollOffset = 0;
+    return;
+  }
+  if (cursor < scrollOffset) scrollOffset = cursor;
+  else if (cursor >= scrollOffset + maxVisible) scrollOffset = cursor - maxVisible + 1;
+}
+
+function showMessage(msg, duration = 2000) {
+  message = msg;
+  if (messageTimeout) clearTimeout(messageTimeout);
+  messageTimeout = setTimeout(() => {
+    message = '';
+    render();
+  }, duration);
+}
+
+// ─── Rendering ──────────────────────────────────────────────────────────────
+
+function stripAnsi(s) {
+  return s.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function pad(s, len) {
+  const visible = stripAnsi(s);
+  if (visible.length >= len) return s;
+  return s + ' '.repeat(len - visible.length);
+}
+
+function render() {
+  const { cols } = getTermSize();
+  const maxVisible = getMaxVisibleRows();
+  const W = Math.max(62, Math.min(cols, 82));
+
+  let buf = CLEAR_SCREEN;
+
+  // ── Top border ──
+  const titleText = t.title;
+  const countText = t.serviceCount(filteredEntries.length);
+  const topInner = W - 2;
+  const topFillLen = topInner - titleText.length - countText.length;
+  const topFill = topFillLen > 0 ? '\u2500'.repeat(topFillLen) : '';
+  buf += `${FG.cyan}\u2554\u2550${BOLD}${FG.brightCyan}${titleText}${RESET}${FG.cyan}${topFill}${FG.gray}${countText}${FG.cyan}\u2550\u2557${RESET}\n`;
+
+  // ── Column header ──
+  const headerLine = `  ${pad('PORT', 8)}${pad('PROCESS', 20)}${pad(t.desc, W - 36)}`;
+  buf += `${FG.cyan}\u2551${RESET}${BG.black}${FG.brightCyan}${BOLD}${pad(headerLine, W - 2)}${RESET}${FG.cyan}\u2551${RESET}\n`;
+  buf += `${FG.cyan}\u2560${'═'.repeat(W - 2)}\u2563${RESET}\n`;
+
+  // ── Entries ──
+  if (filteredEntries.length === 0) {
+    const emptyMsg = filterText ? t.noMatch : t.noPort;
+    const emptyPadLen = Math.floor((W - 2 - stripAnsi(emptyMsg).length) / 2);
+    const emptyLine = ' '.repeat(Math.max(0, emptyPadLen)) + emptyMsg;
+    buf += `${FG.cyan}\u2551${RESET}${FG.gray}${pad(emptyLine, W - 2)}${RESET}${FG.cyan}\u2551${RESET}\n`;
+  } else {
+    const visibleStart = scrollOffset;
+    const visibleEnd = Math.min(scrollOffset + maxVisible, filteredEntries.length);
+
+    if (scrollOffset > 0) {
+      buf += `${FG.cyan}\u2551${RESET}${FG.gray}${ITALIC}${pad(t.scrollUp(scrollOffset), W - 2)}${RESET}${FG.cyan}\u2551${RESET}\n`;
+    }
+
+    for (let i = visibleStart; i < visibleEnd; i++) {
+      const e = filteredEntries[i];
+      const isCursor = i === cursor;
+      const isSel = selected.has(e.port);
+
+      const checkbox = isSel
+        ? `${FG.green}[x]${RESET}`
+        : `${FG.gray}[ ]${RESET}`;
+      const portStr = String(e.port);
+      const procStr = `${e.name} (${e.pid})`;
+      const labelStr = e.label;
+
+      let line;
+      if (e.isSystem) {
+        line = `  ${checkbox}  ${FG.gray}${pad(portStr, 7)}${pad(procStr, 19)}${labelStr}${RESET}`;
+      } else if (e.isDocker) {
+        line = `  ${checkbox}  ${FG.blue}${pad(portStr, 7)}${RESET}${FG.brightBlue}${pad(procStr, 19)}${RESET}${FG.blue}${labelStr}${RESET}`;
+      } else {
+        line = `  ${checkbox}  ${FG.brightWhite}${pad(portStr, 7)}${RESET}${FG.white}${pad(procStr, 19)}${RESET}${FG.gray}${labelStr}${RESET}`;
+      }
+
+      if (isCursor) {
+        const paddedLine = pad(line, W - 2 + (line.length - stripAnsi(line).length));
+        buf += `${FG.cyan}\u2551${RESET}${BG.gray}${FG.brightWhite}${BOLD}${paddedLine}${RESET}${FG.cyan}\u2551${RESET}\n`;
+      } else {
+        buf += `${FG.cyan}\u2551${RESET}${pad(line, W - 2 + (line.length - stripAnsi(line).length))}${FG.cyan}\u2551${RESET}\n`;
+      }
+    }
+
+    if (visibleEnd < filteredEntries.length) {
+      buf += `${FG.cyan}\u2551${RESET}${FG.gray}${ITALIC}${pad(t.scrollDown(filteredEntries.length - visibleEnd), W - 2)}${RESET}${FG.cyan}\u2551${RESET}\n`;
+    }
+  }
+
+  // ── Footer ──
+  buf += `${FG.cyan}\u2560${'═'.repeat(W - 2)}\u2563${RESET}\n`;
+
+  if (confirmMode) {
+    const confirmLine = t.confirmKill(selected.size);
+    buf += `${FG.cyan}\u2551${RESET}${FG.brightYellow}${BOLD}${pad(confirmLine, W - 2)}${RESET}${FG.cyan}\u2551${RESET}\n`;
+  } else if (filterMode) {
+    const filterLine = `${t.filterPrompt}${filterText}\u2588`;
+    buf += `${FG.cyan}\u2551${RESET}${FG.brightCyan}${pad(filterLine, W - 2)}${RESET}${FG.cyan}\u2551${RESET}\n`;
+  } else {
+    const selInfo = selected.size > 0 ? t.selectedCount(selected.size) : '';
+    const footerContent = selInfo
+      ? `${FG.brightYellow}${BOLD}${selInfo}${RESET}${FG.gray}${t.helpLine.slice(selInfo.length)}`
+      : `${FG.gray}${t.helpLine}`;
+    buf += `${FG.cyan}\u2551${RESET}${pad(footerContent, W - 2 + (footerContent.length - stripAnsi(footerContent).length))}${FG.cyan}\u2551${RESET}\n`;
+  }
+
+  buf += `${FG.cyan}\u255a${'═'.repeat(W - 2)}\u255d${RESET}\n`;
+
+  // ── Bottom info ──
+  buf += `${DIM}${FG.gray}  xports v${VERSION}  \u00b7  ${AUTHOR}  \u00b7  ${BLOG}${RESET}\n`;
+
+  // ── Message ──
+  if (message) {
+    buf += `${FG.brightGreen}  ${message}${RESET}\n`;
+  }
+
+  process.stdout.write(buf);
+}
+
+// ─── Actions ────────────────────────────────────────────────────────────────
+
+function toggleSelect() {
+  if (filteredEntries.length === 0) return;
+  const e = filteredEntries[cursor];
+  if (selected.has(e.port)) selected.delete(e.port);
+  else selected.add(e.port);
+}
+
+function toggleAll() {
+  if (filteredEntries.length === 0) return;
+  const allSelected = filteredEntries.every((e) => selected.has(e.port));
+  if (allSelected) for (const e of filteredEntries) selected.delete(e.port);
+  else for (const e of filteredEntries) selected.add(e.port);
+}
+
+function moveUp() {
+  if (filteredEntries.length === 0) return;
+  cursor = cursor > 0 ? cursor - 1 : filteredEntries.length - 1;
+  adjustScroll();
+}
+
+function moveDown() {
+  if (filteredEntries.length === 0) return;
+  cursor = cursor < filteredEntries.length - 1 ? cursor + 1 : 0;
+  adjustScroll();
+}
+
+function killSelected() {
+  const toKill = entries.filter((e) => selected.has(e.port));
+  if (toKill.length === 0) return;
+
+  const pids = [...new Set(toKill.map((e) => e.pid))];
+  let killed = 0;
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+      killed++;
+    } catch { /* gone */ }
+  }
+
+  selected.clear();
+  showMessage(t.killed(killed));
+  setTimeout(() => refresh(), 500);
+}
+
+function refresh() {
+  entries = scanPorts();
+  const existingPorts = new Set(entries.map((e) => e.port));
+  for (const p of selected) {
+    if (!existingPorts.has(p)) selected.delete(p);
+  }
+  applyFilter();
+  render();
+}
+
+// ─── Input handling ─────────────────────────────────────────────────────────
+
+function handleKey(key) {
+  if (confirmMode) {
+    if (key === 'y' || key === 'Y') {
+      confirmMode = false;
+      killSelected();
+    } else {
+      confirmMode = false;
+    }
+    render();
+    return;
+  }
+
+  if (filterMode) {
+    if (key === '\x1b' || key === '\r') {
+      filterMode = false;
+      render();
+      return;
+    }
+    if (key === '\x7f' || key === '\b') {
+      filterText = filterText.slice(0, -1);
+      applyFilter();
+      render();
+      return;
+    }
+    if (key.length === 1 && key >= ' ') {
+      filterText += key;
+      applyFilter();
+      render();
+      return;
+    }
+    if (key === '\x1b[A' || key === '\x1b[B') {
+      filterMode = false;
+    } else {
+      return;
+    }
+  }
+
+  switch (key) {
+    case 'q':
+    case '\x1b':
+      cleanup();
+      process.exit(0);
+      break;
+    case '\x1b[A': case 'k': moveUp(); render(); break;
+    case '\x1b[B': case 'j': moveDown(); render(); break;
+    case ' ':
+      toggleSelect();
+      moveDown();
+      render();
+      break;
+    case 'a': toggleAll(); render(); break;
+    case '\r':
+      if (selected.size > 0) {
+        confirmMode = true;
+      } else if (filteredEntries.length > 0) {
+        selected.add(filteredEntries[cursor].port);
+        confirmMode = true;
+      }
+      render();
+      break;
+    case 'r':
+      refresh();
+      showMessage(t.refreshed);
+      render();
+      break;
+    case '/':
+      filterMode = true;
+      filterText = '';
+      applyFilter();
+      render();
+      break;
+    case '\x03':
+      cleanup();
+      process.exit(0);
+      break;
+  }
+}
+
+// ─── Main ───────────────────────────────────────────────────────────────────
+
+function cleanup() {
+  process.stdout.write(SHOW_CURSOR);
+  process.stdout.write(CLEAR_SCREEN);
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
+}
+
+function main() {
+  if (!process.stdin.isTTY) {
+    console.error(t.ttyError);
+    process.exit(1);
+  }
+
+  entries = scanPorts();
+  applyFilter();
+
+  process.stdout.write(HIDE_CURSOR);
+  process.stdin.setRawMode(true);
+  readline.emitKeypressEvents(process.stdin);
+
+  process.stdout.on('resize', () => { adjustScroll(); render(); });
+
+  process.stdin.on('keypress', (str, key) => {
+    if (!key) return;
+    let keyStr = key.sequence || key.name || str || '';
+    if (key.ctrl && key.name === 'c') { cleanup(); process.exit(0); }
+    handleKey(keyStr);
+  });
+
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => { cleanup(); process.exit(0); });
+  process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+
+  render();
+}
+
+main();
